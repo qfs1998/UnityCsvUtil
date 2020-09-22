@@ -1,3 +1,5 @@
+// 第三方csv文件读写库 做了适当修改  可以读取和存取staic成员，增加了Vector3类型的转换
+// https://github.com/sinbad/UnityCsvUtil/edit/master/CsvUtil.cs
 using UnityEngine;
 using System.Text.RegularExpressions;
 using System.IO;
@@ -6,6 +8,8 @@ using System.Collections.Generic;
 using System;
 using System.Reflection;
 using System.ComponentModel;
+
+using System.Text;
 
 namespace Sinbad {
 
@@ -30,7 +34,7 @@ namespace Sinbad {
         //   fields as per the header. If false, ignores and just fills what it can
         public static List<T> LoadObjects<T>(string filename, bool strict = true) where T: new()  {
             using (var stream = File.OpenRead(filename)) {
-                using (var rdr = new StreamReader(stream)) {
+                using (var rdr = new StreamReader(stream,Encoding.UTF8)) {
                     return LoadObjects<T>(rdr, strict);
                 }
             }
@@ -48,8 +52,10 @@ namespace Sinbad {
             var ret = new List<T>();
             string header = rdr.ReadLine();
             var fieldDefs = ParseHeader(header);
-            FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            // FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            // PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance| BindingFlags.Static);
+            PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance| BindingFlags.Static);
             bool isValueType = typeof(T).IsValueType;
             string line;
             while((line = rdr.ReadLine()) != null) {
@@ -76,7 +82,7 @@ namespace Sinbad {
         // Field names are matched case-insensitive for convenience
         public static void LoadObject<T>(string filename, ref T destObject) {
             using (var stream = File.Open(filename, FileMode.Open)) {
-                using (var rdr = new StreamReader(stream)) {
+                using (var rdr = new StreamReader(stream,Encoding.UTF8)) {
                     LoadObject<T>(rdr, ref destObject);
                 }
             }
@@ -88,8 +94,10 @@ namespace Sinbad {
         // You can optionally include other columns for descriptions etc, these are ignored
         // Field names are matched case-insensitive for convenience
         public static void LoadObject<T>(TextReader rdr, ref T destObject) {
-            FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            // FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            // PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            FieldInfo[] fi = typeof(T).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance| BindingFlags.Static);
+            PropertyInfo[] pi = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance| BindingFlags.Static);
             // prevent auto-boxing causing problems with structs
             object nonValueObject = destObject;
             string line;
@@ -116,7 +124,7 @@ namespace Sinbad {
         // This method throws exceptions if unable to write
         public static void SaveObject<T>(T obj, string filename) {
             using (var stream = File.Open(filename, FileMode.Create)) {
-                using (var wtr = new StreamWriter(stream)) {
+                using (var wtr = new StreamWriter(stream,Encoding.UTF8)) {
                     SaveObject<T>(obj, wtr);
                 }
             }
@@ -141,7 +149,13 @@ namespace Sinbad {
                 // Quote if necessary
                 if (val.IndexOfAny(quotedChars) != -1) {
                     val = string.Format("\"{0}\"", val);
+                    // Debug.Log("val is "+val.ToString());
+                    
                 }
+                // else
+                // {
+                //     Debug.Log("val is "+val.ToString());
+                // }
                 w.Write(val);
             }
         }
@@ -152,7 +166,7 @@ namespace Sinbad {
         // This method throws exceptions if unable to write
         public static void SaveObjects<T>(IEnumerable<T> objs, string filename) {
             using (var stream = File.Open(filename, FileMode.Create)) {
-                using (var wtr = new StreamWriter(stream)) {
+                using (var wtr = new StreamWriter(stream,Encoding.UTF8)) {
                     SaveObjects<T>(objs, wtr);
                 }
             }
@@ -260,9 +274,20 @@ namespace Sinbad {
                 // Case insensitive comparison
                 if (string.Compare(fieldName, f.Name, true) == 0) {
                     // Might need to parse the string into the field type
-                    object typedVal = f.FieldType == typeof(string) ? val : ParseString(val, f.FieldType);
-                    f.SetValue(destObject, typedVal);
-                    result = true;
+                    // 添加 csv文件中string转Vector3
+                    if(f.FieldType==typeof(Vector3))
+                    {
+                        var newVec3=StringToVector3(val);
+                        f.SetValue(destObject, newVec3);
+                        result = true;
+                    }
+                    else
+                    {
+                        object typedVal = f.FieldType == typeof(string) ? val : ParseString(val, f.FieldType);
+                        f.SetValue(destObject, typedVal);
+                        result = true;
+                    }
+
                     break;
                 }
             }
@@ -286,5 +311,25 @@ namespace Sinbad {
         private static string RemoveSpaces(string strValue) {
             return Regex.Replace(strValue, @"\s", string.Empty);
         }
+        //原先这个包不支持 Load vector3类型 ，添加str to ve3的转换函数  在成员类型为Vector3时主动调用转换
+        public static Vector3 StringToVector3(string sVector)
+        {
+            // Remove the parentheses
+            if (sVector.StartsWith ("(") && sVector.EndsWith (")")) {
+                sVector = sVector.Substring(1, sVector.Length-2);
+            }
+    
+            // split the items
+            string[] sArray = sVector.Split(',');
+    
+            // store as a Vector3
+            Vector3 result = new Vector3(
+                float.Parse(sArray[0]),
+                float.Parse(sArray[1]),
+                float.Parse(sArray[2]));
+    
+            return result;
+        }
     }
+
 }
